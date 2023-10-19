@@ -1,0 +1,45 @@
+#
+#
+#
+BIN_NAME = earlyloc
+CFLAGS = $(GLOBALFLAGS) -O3 -g -I../include -flto
+LIBS = -lm $(MT_FLAG)
+
+B = $(EW_HOME)/$(EW_VERSION)/bin
+L = $(EW_HOME)/$(EW_VERSION)/lib
+LL = ../lib
+
+EWLIBS = $(L)/lockfile_ew.o $(L)/lockfile.o $(L)/libew_mt.a
+
+LOCALLIBS = $(LL)/matrix.o $(LL)/dl_chain_list.o $(LL)/raytracing.o
+
+OBJS = earlyloc_misc.o earlyloc_locate.o earlyloc_list.o earlyloc_report.o
+
+earlyloc: earlyloc.o $(EWLIBS) $(OBJS)
+	@echo Creating $(BIN_NAME)...
+	@$(CC) $(CFLAGS) -o $(B)/$(BIN_NAME) earlyloc.o $(OBJS) $(EWLIBS) $(LOCALLIBS) $(LIBS)
+
+earlyloc_sql: earlyloc
+
+# Compile rule for Object
+.c.o:
+	@echo Compiling $<...
+	@$(CC) $(CFLAGS) -c $<
+
+# Optional MySQL rule
+#
+%_sql: CFLAGS+=-I/usr/include/mysql
+%_sql: CFLAGS+=-D_USE_SQL
+%_sql: LIBS+=-lmysqlclient
+%_sql: LOCALLIBS+=$(LL)/dblist.o
+
+# Clean-up rules
+clean:
+	@echo Cleaning build objects...
+	@rm -f a.out core *.o *.obj *% *~
+
+clean_bin:
+	@echo Removing binary execution file...
+	@rm -f $(B)/$(BIN_NAME)
+
+.PHONY: clean clean_bin
