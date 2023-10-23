@@ -45,6 +45,7 @@ static HYPO_STATE *reset_init_guess( HYPO_STATE * );
 
 static EARLY_PICK_MSG *fill_coor2epick( EARLY_PICK_MSG *, const USE_SNL * );
 static PICK_STATE *parse_epick2pickstate( PICK_STATE *, const EARLY_PICK_MSG * );
+static PICK_STATE *parse_eewpick2pickstate( PICK_STATE *, const char * );
 static int mk_outdir_by_evt( char *, const char *, const double, const int, const char * );
 
 static int thread_proc_trigger( void * );
@@ -117,7 +118,8 @@ static uint8_t InstId;          /* local installation id             */
 static uint8_t MyModId;         /* Module Id for this program        */
 static uint8_t TypeHeartBeat;
 static uint8_t TypeError;
-static uint8_t TypePickInput;
+static uint8_t TypeEarlyPick;
+static uint8_t TypeEEWPick;
 static uint8_t TypeHypoOutput;
 
 /* Error messages used by earlyloc */
@@ -136,7 +138,7 @@ static char Text[150];         /* string for log/error messages          */
 static volatile uint8_t UpdateStatus = LIST_IS_UPDATED;
 /* Macros */
 #define HYPO_IS_CONVERGED(__HYPO) \
-		((__HYPO)->avg_error <= CONVERGE_CRITERIA && (__HYPO)->avg_error > 0.1 && (__HYPO)->avg_weight > 0.1)
+		((__HYPO)->avg_error <= CONVERGE_CRITERIA && ((__HYPO)->avg_error * (__HYPO)->avg_weight) > 0.1)
 
 #define PICK_IS_ON_SURFACE(__PICK) \
 		(!(memcmp((__PICK)->observe.location, "--", 2)) || \
@@ -172,7 +174,8 @@ int main ( int argc, char **argv )
 	char    *lockfile;
 	int32_t  lockfile_fd;
 /* */
-	EARLY_PICK_MSG input_pick;
+	char            buffer[4096] = { 0 };
+	EARLY_PICK_MSG *input_pick = (EARLY_PICK_MSG *)buffer;
 /* */
 	USE_SNL    *usesnl = NULL;
 	PICK_STATE  pick_state;
@@ -264,7 +267,7 @@ int main ( int argc, char **argv )
 			}
 
 		/* Get msg & check the return code from transport */
-			res = tport_getmsg(&InRegion, Getlogo, nLogo, &reclogo, &recsize, (char *)&input_pick, sizeof(EARLY_PICK_MSG));
+			res = tport_getmsg(&InRegion, Getlogo, nLogo, &reclogo, &recsize, buffer, sizeof(buffer));
 		/* no more new messages */
 			if ( res == GET_NONE ) {
 				break;
@@ -274,7 +277,7 @@ int main ( int argc, char **argv )
 			/* complain and try again */
 				sprintf(
 					Text, "Retrieved msg[%ld] (i%u m%u t%u) too big for Buffer[%ld]",
-					recsize, reclogo.instid, reclogo.mod, reclogo.type, sizeof(EARLY_PICK_MSG)
+					recsize, reclogo.instid, reclogo.mod, reclogo.type, sizeof(buffer)
 				);
 				earlyloc_status( TypeError, ERR_TOOBIG, Text );
 				continue;
@@ -298,63 +301,77 @@ int main ( int argc, char **argv )
 			}
 
 		/* Process the message */
-			if ( reclogo.type == TypePickInput ) {
+			if ( reclogo.type == TypeEarlyPick ) {
 			#ifdef _DEBUG
-				printf("earlyloc: Got a new pick from %s.%s.%s.%s!\n",
-				input_pick.station, input_pick.channel, input_pick.network, input_pick.location);
+				printf("earlyloc: Got a new early pick from %s.%s.%s.%s!\n",
+				input_pick->station, input_pick->channel, input_pick->network, input_pick->location);
 			#endif
-				if ( !(usesnl = el_list_find( &input_pick )) ) {
+				if ( !(usesnl = el_list_find( input_pick )) ) {
 				#ifdef _DEBUG
 				/* Not found in trace table */
 					printf("earlyloc: Pick with %s.%s.%s.%s not found in SNL table, maybe it's a new SNL.\n",
-					input_pick.station, input_pick.channel, input_pick.network, input_pick.location);
+					input_pick->station, input_pick->channel, input_pick->network, input_pick->location);
 				#endif
 				/* Force to update the table */
 					if ( UpdateStatus == LIST_IS_UPDATED )
 						UpdateStatus = LIST_NEED_UPDATED;
 					continue;
 				}
-			/* Make the global pick information to local pick type */
-				parse_epick2pickstate( &pick_state, fill_coor2epick( &input_pick, usesnl ) );
-			/* Drop the existed pick */
-				if ( check_pick_exist_pool( &main_pool, &pick_state ) )
+			/* Make the early pick information to local pick type */
+				if ( !parse_epick2pickstate( &pick_state, fill_coor2epick( input_pick, usesnl ) ) )
 					continue;
-			/* Mark the pick with higher weight (w\ low SNR) */
-				if (
-					(!strcmp(pick_state.observe.phase_name, "P") && pick_state.observe.weight >= IgnoreWeightP) ||
-					(!strcmp(pick_state.observe.phase_name, "S") && pick_state.observe.weight >= IgnoreWeightS)
-				) {
-					EL_MARK_PICK_REJECT( &pick_state );
-				}
-			/* Insert the new picking to the existed hypos' pick pool */
-				associate_pick_hypos( &hypo_pool, &pick_state );
-			/*
-			 * If this new picking was not been inserted to any hypo pool,
-			 * check it could cluster with pickings inside main pool
-			 */
-				if ( !(pick_state.flag & PICK_FLAG_INUSE) && !(pick_state.flag & PICK_FLAG_REJECT) && main_pool.totals > ClusterPicks ) {
-					if ( check_pick_cluster_pool( &main_pool, &pick_state ) ) {
-					/* Creating new hypo state to process trigger... */
-						if ( (hypo_state = create_hypo_state()) ) {
-						/* Mark the pick as in-use & primary */
-							EL_MARK_PICK_INUSE( &pick_state );
-							insert_pick_to_pool( &hypo_state->pool, &pick_state, 1 );
-							copy_associated_picks( &hypo_state->pool, &main_pool, 1 );
-							mark_primary_picks( &hypo_state->pool );
-						/* Mark the last pick insert time for temporary use, not the real trigger time */
-							hypo_state->trigger_time = el_misc_timenow();
-							hypo_state->flag = HYPO_IS_WAITING;
-							hypo_state->eid = gen_hypo_eid( hypo_state );
-						/* */
-							insert_hypo_to_pool( &hypo_pool, hypo_state );
-						}
+			}
+			else if ( reclogo.type == TypeEEWPick ) {
+				buffer[recsize] = '\0';
+			#ifdef _DEBUG
+				printf("earlyloc: Got a new EEW pick: '%s'!\n", buffer);
+			#endif
+			/* Make the EEW pick information to local pick type */
+				if ( !parse_eewpick2pickstate( &pick_state, buffer ) )
+					continue;
+			}
+			else {
+			/* Not the acceptable type of pick, drop it! */
+				continue;
+			}
+
+		/* Drop the pool-existed pick */
+			if ( check_pick_exist_pool( &main_pool, &pick_state ) )
+				continue;
+		/* Mark the pick with higher weight (w\ low SNR) */
+			if (
+				(!strcmp(pick_state.observe.phase_name, "P") && pick_state.observe.weight >= IgnoreWeightP) ||
+				(!strcmp(pick_state.observe.phase_name, "S") && pick_state.observe.weight >= IgnoreWeightS)
+			) {
+				EL_MARK_PICK_REJECT( &pick_state );
+			}
+		/* Insert the new picking to the existed hypos' pick pool */
+			associate_pick_hypos( &hypo_pool, &pick_state );
+		/*
+		 * If this new picking was not been inserted to any hypo pool, check it could cluster with pickings inside main pool
+		 */
+			if ( !(pick_state.flag & PICK_FLAG_INUSE) && !(pick_state.flag & PICK_FLAG_REJECT) && main_pool.totals > ClusterPicks ) {
+				if ( check_pick_cluster_pool( &main_pool, &pick_state ) ) {
+				/* Creating new hypo state to process trigger... */
+					if ( (hypo_state = create_hypo_state()) ) {
+					/* Mark the pick as in-use & primary */
+						EL_MARK_PICK_INUSE( &pick_state );
+						insert_pick_to_pool( &hypo_state->pool, &pick_state, 1 );
+						copy_associated_picks( &hypo_state->pool, &main_pool, 1 );
+						mark_primary_picks( &hypo_state->pool );
+					/* Mark the last pick insert time for temporary use, not the real trigger time */
+						hypo_state->trigger_time = el_misc_timenow();
+						hypo_state->flag = HYPO_IS_WAITING;
+						hypo_state->eid = gen_hypo_eid( hypo_state );
+					/* */
+						insert_hypo_to_pool( &hypo_pool, hypo_state );
 					}
 				}
-			/* Starting the hypo processing thread... */
-				bootstrap_hypo_in_pool( &hypo_pool );
-			/* All the picks should exist in the main pool */
-				insert_pick_to_pool( &main_pool, &pick_state, 0 );
 			}
+		/* Starting the hypo processing thread... */
+			bootstrap_hypo_in_pool( &hypo_pool );
+		/* All the picks should exist in the main pool */
+			insert_pick_to_pool( &main_pool, &pick_state, 0 );
 		} while ( 1 ); /* end of message-processing-loop */
 	/* no more messages; wait for new ones to arrive */
 		sleep_ew(50);
@@ -776,8 +793,12 @@ static void earlyloc_lookup( void )
 		fprintf(stderr, "earlyloc: Invalid message type <TYPE_ERROR>; exiting!\n");
 		exit(-1);
 	}
-	if ( GetType("TYPE_EARLY_PICK", &TypePickInput) != 0 ) {
+	if ( GetType("TYPE_EARLY_PICK", &TypeEarlyPick) != 0 ) {
 		fprintf(stderr, "earlyloc: Invalid message type <TYPE_EARLY_PICK>; exiting!\n");
+		exit(-1);
+	}
+	if ( GetType("TYPE_EEW", &TypeEEWPick) != 0 ) {
+		fprintf(stderr, "earlyloc: Invalid message type <TYPE_EEW>; exiting!\n");
 		exit(-1);
 	}
 	if ( GetType("TYPE_EARLY_EVENT", &TypeHypoOutput) != 0 ) {
@@ -853,9 +874,9 @@ static int thread_proc_trigger( void *arg )
 	MSG_LOGO        logo = { 0 };
 	char            _report_path[MAX_PATH_STR] = { 0 };
 	int             max_valids = 0;
+	int             nsearch;
 	int             pool_status = POOL_HAS_NEW_PICK;
-	double          min_error = CONVERGE_CRITERIA;
-	double          search_begin;
+	double          min_werror = CONVERGE_CRITERIA;
 	double          time_last_hypo = el_misc_timenow();
 
 /* Build the message */
@@ -875,12 +896,12 @@ static int thread_proc_trigger( void *arg )
 		/* Initial guess */
 			if ( result->ig_origin_time < 0.0 ) {
 				el_loc_location_guess( result, &PWaveModel, &SWaveModel );
-				el_loc_location_refine( result, &PWaveModel, &SWaveModel );
+				el_loc_location_refine( result, &PWaveModel, &SWaveModel, 0 );
 				save_to_init_guess( result );
 			}
 		/* Main hypo iteration process... */
 			use_init_guess( result );
-			search_begin = result->origin_time;
+			nsearch = 0;
 			do {
 			/* The main locate process */
 				if ( el_loc_primary_locate( result, &PWaveModel, &SWaveModel ) ) {
@@ -890,6 +911,7 @@ static int thread_proc_trigger( void *arg )
 			/* Check if it converge or not */
 				if ( HYPO_IS_CONVERGED( result ) ) {
 				/* Adjust the origin time to reduce the overall residual */
+					el_loc_location_refine( result, &PWaveModel, &SWaveModel, 1 );
 					el_loc_origintime_adjust( result, &PWaveModel, &SWaveModel );
 					el_loc_all_states_update( result, &PWaveModel, &SWaveModel );
 				/* Finally, output the report... */
@@ -901,14 +923,13 @@ static int thread_proc_trigger( void *arg )
 				/* Keep the best solution for next initial guess */
 					if (
 						result->pool.valids > max_valids ||
-						(result->pool.valids == max_valids && result->avg_error < min_error)
+						(result->pool.valids == max_valids && (result->avg_error / result->avg_weight) < min_werror)
 					) {
 						save_to_best_state( result );
 						max_valids = result->pool.valids;
-						min_error = result->avg_error;
+						min_werror = result->avg_error / result->avg_weight;
 					/* */
-						if ( result->pool.valids > 12 )
-							save_to_init_guess( result );
+						save_to_init_guess( result );
 					}
 				/* Increase the report # */
 					result->rep_count++;
@@ -916,10 +937,9 @@ static int thread_proc_trigger( void *arg )
 				}
 			/* */
 				use_init_guess( result );
-				if ( !result->rep_count && (search_begin - result->origin_time) < 20.0 ) {
-					result->origin_time -= 1.0;
+				if ( !result->rep_count && nsearch++ < 5 ) {
 					unmark_locmask_picks( &result->pool, 0.0 );
-					el_loc_location_refine( result, &PWaveModel, &SWaveModel );
+					el_loc_location_refine( result, &PWaveModel, &SWaveModel, 0 );
 					save_to_init_guess( result );
 					continue;
 				}
@@ -939,12 +959,11 @@ static int thread_proc_trigger( void *arg )
 		/* Unmask all picks */
 			unmark_locmask_picks( &result->pool, 0.0 );
 		/* */
-			if ( !result->rep_count || (result->pool.valids < 12 && result->avg_weight < 0.5) ) {
+			if ( !result->rep_count ) {
 			/* */
 				reset_init_guess( result );
 			}
-		/* */
-			if ( result->rep_count > MIN_STABLE_REPCOUNT ) {
+			else if ( result->rep_count > MIN_STABLE_REPCOUNT ) {
 			/* Don't reject any picks before the stable result */
 				mark_reject_picks( &result->pool, REJECT_CRITERIA );
 			}
@@ -995,6 +1014,8 @@ static int thread_proc_trigger( void *arg )
 		}
 	} while ( result->flag != HYPO_IS_FINISHED );
 /* End process */
+	if ( !result->rep_count && strlen(_report_path) )
+		remove(_report_path);
 	result->flag = HYPO_IS_FINISHED;
 	logit("ot", "earlyloc: Finished hypo(#%d) at the end of hypo life.\n", result->eid);
 
@@ -1039,6 +1060,37 @@ static PICK_STATE *parse_epick2pickstate( PICK_STATE *dest, const EARLY_PICK_MSG
 	dest->r_weight = 0.0;
 
 	return dest;
+}
+
+/*
+ *
+ */
+static PICK_STATE *parse_eewpick2pickstate( PICK_STATE *dest, const char *src )
+{
+/* */
+	int ret = sscanf(src, "%s %s %s %s %lf %lf %*f %*f %*f %*f %lf %hhd %*d %*d",
+		dest->observe.station, dest->observe.channel, dest->observe.network, dest->observe.location,
+		&dest->observe.longitude, &dest->observe.latitude, &dest->observe.picktime, &dest->observe.weight
+	);
+	dest->observe.elevation = 1.0;
+/* */
+	if ( dest->observe.channel[2] == 'Z' ) {
+		dest->observe.phase_name[0] = 'P';
+		dest->observe.phase_name[1] = '\0';
+	}
+	else {
+		dest->observe.phase_name[0] = 'S';
+		dest->observe.phase_name[1] = '\0';
+	}
+/* */
+	dest->flag = 0;
+	dest->recvtime = el_misc_timenow();
+	dest->trv_time = 0.0;
+	dest->distance = 0.0;
+	dest->residual = 0.0;
+	dest->r_weight = 0.0;
+
+	return ret == 8 ? dest : NULL;
 }
 
 /**

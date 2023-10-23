@@ -33,10 +33,10 @@ static void  send_result_message_ring( SHM_INFO *, MSG_LOGO *, const void *, con
 		"\nReporting time: %s, Avg. error: %.2f, Q: %c, Gap: %.0f, Avg. weight: %.2f, Total picks: %d(%d), Valid picks: %d, Valid mag.: %d, Padj: %.2f\n"
 
 #define REPORT_HYPO_STATE_COLUMN  \
-		" Year  Month  Day  Hour  Min.   Sec.     Lat.      Lon.   Depth   Mall  Mpd_s    Mpv    Mpd    Mtc  Proc_time    After_OT\n"
+		" Year  Month  Day  Hour  Min.   Sec.     Lat.      Lon.   Depth   Mall  Mpd_s    Mpv    Mpd    Mtc  Proc_time  After_OT\n"
 
 #define REPORT_HYPO_STATE_FORMAT  \
-		" %4d     %02d   %02d    %02d    %02d  %05.2f  %7.4f  %8.4f  %6.2f  %5.2f  %5.2f  %5.2f  %5.2f  %5.2f     %6.2f      %6.2f\n"
+		" %4d     %02d   %02d    %02d    %02d  %05.2f  %7.4f  %8.4f  %6.2f  %5.2f  %5.2f  %5.2f  %5.2f  %5.2f     %6.2f    %6.2f\n"
 
 #define REPORT_DIVIDER  \
 		"==============================================================================================================================================================================\n"

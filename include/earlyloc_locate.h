@@ -16,7 +16,7 @@
 int el_loc_primary_locate( HYPO_STATE *, const LAYER_VEL_MODEL *, const LAYER_VEL_MODEL * );
 void el_loc_all_states_update( HYPO_STATE *, const LAYER_VEL_MODEL *, const LAYER_VEL_MODEL * );
 void el_loc_location_guess( HYPO_STATE *, const LAYER_VEL_MODEL *, const LAYER_VEL_MODEL * );
-void el_loc_location_refine( HYPO_STATE *, const LAYER_VEL_MODEL *, const LAYER_VEL_MODEL * );
+void el_loc_location_refine( HYPO_STATE *, const LAYER_VEL_MODEL *, const LAYER_VEL_MODEL *, const int );
 double el_loc_origintime_adjust( HYPO_STATE *, const LAYER_VEL_MODEL *, const LAYER_VEL_MODEL * );
 double el_loc_residual_estimate( const HYPO_STATE *, const PICK_STATE *, const LAYER_VEL_MODEL *, const LAYER_VEL_MODEL * );
 /* */

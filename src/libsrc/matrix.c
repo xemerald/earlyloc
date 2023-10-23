@@ -9,81 +9,91 @@
 /* */
 #include <matrix.h>
 
-inline static int matrix_same_size( const MATRIX *, const MATRIX * );
-inline static int matrix_square( const MATRIX * );
-static int matrix_copy( MATRIX *, const MATRIX * );
+/* */
+#define MATRIX_DIAG_EPS  1.0e-5
 
-/**/
+#define ARE_SAME_SIZE( _MATRIX_A, _MATRIX_B ) \
+		((_MATRIX_A)->i == (_MATRIX_B)->i && (_MATRIX_A)->j == (_MATRIX_B)->j)
+
+#define IS_SQUARE( _MATRIX ) \
+		((_MATRIX)->i == (_MATRIX)->j)
+
+#define ADD_EPS_TO_DIAG( _MATRIX ) \
+		__extension__({ \
+			if ( IS_SQUARE( (_MATRIX) ) ) \
+				for ( int i = 0; i < (_MATRIX)->i; i++ ) \
+					if ( fabs((_MATRIX)->element[i * (_MATRIX)->j + i]) < MATRIX_DIAG_EPS ) \
+						(_MATRIX)->element[i * (_MATRIX)->j + i] += (_MATRIX)->element[i * (_MATRIX)->j + i] > 0.0 ? MATRIX_DIAG_EPS : -MATRIX_DIAG_EPS; \
+		})
+
+/***/
+static MATRIX *duplicate_matrix( const MATRIX * );
+
+/***/
 MATRIX *matrix_new( const int row, const int column ) {
-	MATRIX *res;
+	MATRIX *res = (MATRIX *)calloc(1, sizeof(MATRIX));
 
-	res          = (MATRIX *)calloc(1, sizeof(MATRIX));
-	res->i       = row;
-	res->j       = column;
-	res->total   = row * column;
-	res->element = (double *)calloc(res->total, sizeof(double));
+	if ( res ) {
+		res->i       = row;
+		res->j       = column;
+		res->total   = row * column;
+		if ( !(res->element = (double *)calloc(res->total, sizeof(double))) ) {
+			free(res);
+			res = NULL;
+		}
+	}
 
 	return res;
 }
 
-/**/
+/***/
 MATRIX *matrix_identity( const int rank ) {
-	MATRIX *res = matrix_new( rank, rank );
-	int     i;
-	int     step = res->j + 1;
+	MATRIX   *res = matrix_new( rank, rank );
+	const int step = res->j + 1;
 
-	for ( i=0; i<res->total; i+=step ) res->element[i] = 1.0;
+	if ( res )
+		for ( long i = 0; i < res->total; i += step ) 
+			res->element[i] = 1.0;
 
 	return res;
 }
 
-/**/
+/***/
 MATRIX *matrix_add( const MATRIX *a, const MATRIX *b ) {
-	int     i, j;
 	MATRIX *res = NULL;
 
-	if ( matrix_same_size(a, b) ) {
-		res = matrix_new( a->i, a->j );
-
-		for ( i=0; i<a->i; i++ ) {
-			for ( j=0; j<a->j; j++ )
+	if ( ARE_SAME_SIZE( a, b ) && (res = matrix_new( a->i, a->j )) ) {
+		for ( int i = 0; i < a->i; i++ )
+			for ( int j = 0; j < a->j; j++ )
 				res->element[i * a->j + j] = a->element[i * a->j + j] + b->element[i * a->j + j];
-		}
 	}
 
 	return res;
 }
 
-/**/
+/***/
 MATRIX *matrix_sub( const MATRIX *a, const MATRIX *b ) {
-	int     i, j;
 	MATRIX *res = NULL;
 
-	if ( matrix_same_size(a, b) ) {
-		res = matrix_new( a->i, a->j );
-
-		for ( i=0; i<a->i; i++ ) {
-			for ( j=0; j<a->j; j++ )
+	if ( ARE_SAME_SIZE( a, b ) && (res = matrix_new( a->i, a->j )) ) {
+		for ( int i = 0; i < a->i; i++ )
+			for ( int j = 0; j < a->j; j++ )
 				res->element[i * a->j + j] = a->element[i * a->j + j] - b->element[i * a->j + j];
-		}
 	}
 
 	return res;
 }
 
-/**/
+/***/
 MATRIX *matrix_mul( const MATRIX *a, const MATRIX *b ) {
-	int     i, j, k;
 	double  tmp;
 	MATRIX *res = NULL;
 
-	if ( a->j == b->i ) {
-		res = matrix_new( a->i, b->j );
-		for ( i=0; i<a->i; i++ ) {
-			for ( k=0; k<a->j; k++ ) {
-				tmp = a->element[i * a->j + k];
-				if ( fabs(tmp) > DBL_EPSILON ) {
-					for ( j=0; j<b->j; j++ ) {
+	if ( a->j == b->i && (res = matrix_new( a->i, b->j )) ) {
+		for ( int i = 0; i < a->i; i++ ) {
+			for ( int k = 0; k < a->j; k++ ) {
+				if ( fabs(tmp = a->element[i * a->j + k]) > DBL_EPSILON ) {
+					for ( int j = 0; j < b->j; j++ ) {
 						if ( fabs(b->element[k * b->j + j]) > DBL_EPSILON )
 							res->element[i * b->j + j] += tmp * b->element[k * b->j + j];
 					}
@@ -124,17 +134,15 @@ MATRIX *matrix_mul_simd( const MATRIX *a, const MATRIX *b ) {
 	return res;
 }
 */
-/**/
+
+/***/
 MATRIX *matrix_transpose( const MATRIX *a ) {
-	int     i, j;
-	MATRIX *res = NULL;
+	MATRIX *res = matrix_new( a->j, a->i );
 
-	res = matrix_new( a->j, a->i );
-
-	for ( i=0; i<a->i; i++ ) {
-		for ( j=0; j<a->j; j++ ) {
-			res->element[j * a->i + i] = a->element[i * a->j + j];
-		}
+	if ( res ) {
+		for ( int i = 0; i < a->i; i++ )
+			for ( int j = 0; j < a->j; j++ )
+				res->element[j * a->i + i] = a->element[i * a->j + j];
 	}
 
 	return res;
@@ -142,13 +150,11 @@ MATRIX *matrix_transpose( const MATRIX *a ) {
 
 /*
 MATRIX *matrix_adjugate( const MATRIX *a ) {
-	int     i, j;
 	MATRIX *res = NULL;
-
-	if ( matrix_square( a ) ) {
+	if ( IS_SQUARE( a ) ) {
 		res = matrix_init( a->i, a->j );
-		for ( i=0; i<a->i; i++ ) {
-			for ( j=0; j<a->j; j++ ) {
+		for ( int i = 0; i < a->i; i++ ) {
+			for ( int j = 0; j < a->j; j++ ) {
 				res->element[j*(a->i) + i] = a->element[i*(a->j) + j];
 			}
 		}
@@ -157,23 +163,24 @@ MATRIX *matrix_adjugate( const MATRIX *a ) {
 	return res;
 }
 */
-/**/
-MATRIX *matrix_inverse( const MATRIX *a ) {
-	int     i, j, k;
+
+/***/
+MATRIX *matrix_inverse( const MATRIX *a ) 
+{
 	int     prow = 0;
 	double  pivot;
 	MATRIX *res = NULL;
 	MATRIX *tmp = NULL;
 
-	if ( matrix_square( a ) ) {
-		tmp = matrix_new( a->i, a->j );
+	if ( IS_SQUARE( a ) ) {
+		tmp = duplicate_matrix( a );
 		res = matrix_identity( a->i );
-		matrix_copy( tmp, a );
 
-		for ( i=0; i<a->i; i++ ) {
+		for ( int i = 0; i < a->i; i++ ) {
 		/* */
 			pivot = tmp->element[i * a->j + i];
-			for ( j=i+1, prow=i; j<a->i; j++ ) {
+			prow = i;
+			for ( int j = i + 1; j < a->i; j++ ) {
 				if ( tmp->element[j * a->j + i] > pivot ) {
 					pivot = tmp->element[j * a->j + i];
 					prow  = j;
@@ -181,7 +188,7 @@ MATRIX *matrix_inverse( const MATRIX *a ) {
 			}
 		/* */
 			if ( prow != i ) {
-				for ( j=0; j<a->j; j++ ) {
+				for ( int j = 0; j < a->j; j++ ) {
 				/* */
 					pivot                         = tmp->element[i * a->j + j];
 					tmp->element[i * a->j + j]    = tmp->element[prow * a->j + j];
@@ -194,17 +201,17 @@ MATRIX *matrix_inverse( const MATRIX *a ) {
 			}
 		/* */
 			pivot = tmp->element[i * a->j + i];
-			for ( j=0; j<a->j; j++ ) {
+			for ( int j = 0; j < a->j; j++ ) {
 			/* */
 				tmp->element[i * a->j + j] /= pivot;
 			/* */
 				res->element[i * a->j + j] /= pivot;
 			}
 		/* */
-			for ( j=i+1; j<a->i; j++ ) {
+			for ( int j = i + 1; j < a->i; j++ ) {
 				pivot = tmp->element[j * a->j + i];
 				if ( fabs(pivot) > DBL_EPSILON ) {
-					for ( k=0; k<a->j; k++ ) {
+					for ( int k = 0; k < a->j; k++ ) {
 					/* */
 						if ( fabs(tmp->element[i * a->j + k]) > DBL_EPSILON )
 							tmp->element[j * a->j + k] -= pivot * tmp->element[i * a->j + k];
@@ -215,13 +222,13 @@ MATRIX *matrix_inverse( const MATRIX *a ) {
 				}
 			}
 		}
-
+	/* */
 		prow = a->i - 1;
-		for ( i=0; i<prow; i++ ) {
-			for ( j=i+1; j<a->i; j++ ) {
+		for ( int i = 0; i < prow; i++ ) {
+			for ( int j = i + 1; j < a->i; j++ ) {
 				pivot = tmp->element[i * a->j + j];
 				if ( fabs(pivot) > DBL_EPSILON ) {
-					for ( k=0; k<a->j; k++ ) {
+					for ( int k = 0; k < a->j; k++ ) {
 					/* */
 						if ( fabs(tmp->element[j * a->j + k]) > DBL_EPSILON )
 							tmp->element[i * a->j + k] -= pivot * tmp->element[j * a->j + k];
@@ -232,7 +239,7 @@ MATRIX *matrix_inverse( const MATRIX *a ) {
 				}
 			}
 		}
-
+	/* */
 		matrix_free( tmp );
 	}
 
@@ -241,11 +248,20 @@ MATRIX *matrix_inverse( const MATRIX *a ) {
 
 /* Least square */
 MATRIX *matrix_div( const MATRIX *a, const MATRIX *b ) {
-	MATRIX *gt   = matrix_transpose( b );
-	MATRIX *gtg  = matrix_mul( gt, b );
-	MATRIX *gtd  = matrix_mul( gt, a );
-	MATRIX *igtg = matrix_inverse( gtg );
-	MATRIX *res  = matrix_mul( igtg, gtd );
+	MATRIX *gt;
+	MATRIX *gtg;
+	MATRIX *gtd;
+	MATRIX *igtg;
+	MATRIX *res;
+
+/* */
+	gt  = matrix_transpose( b );
+	gtg = matrix_mul( gt, b );
+	gtd = matrix_mul( gt, a );
+/* */
+	ADD_EPS_TO_DIAG( gtg );
+	igtg = matrix_inverse( gtg );
+	res  = matrix_mul( igtg, gtd );
 
 	matrix_free( gt );
 	matrix_free( gtg );
@@ -259,18 +275,32 @@ MATRIX *matrix_div( const MATRIX *a, const MATRIX *b ) {
  *
  */
 MATRIX *matrix_div_weighted( const MATRIX *a, const MATRIX *b, const MATRIX *w ) {
-	MATRIX *gt    = matrix_transpose( b );
-	MATRIX *wg    = matrix_mul( w, b );
-	MATRIX *gtwg  = matrix_mul( gt, wg );
-	MATRIX *wd    = matrix_mul( w, a );
-	MATRIX *gtwd  = matrix_mul( gt, wd );
-	MATRIX *igtwg = matrix_inverse( gtwg );
-	MATRIX *res   = matrix_mul( gtwg, gtwd );
+	MATRIX *wg;
+	MATRIX *gtw;
+	MATRIX *gtwg;
+	MATRIX *gtwd;
+	MATRIX *igtwg;
+	MATRIX *res;
 
-	matrix_free( gt );
+/* */
+	wg = duplicate_matrix( b );
+	for ( int i = 0; i < wg->i; i++ ) {
+		double tmp = w->element[i * w->j + i];
+		for ( int j = 0; j < wg->j; j++ ) 
+			wg->element[i * wg->j + j] *= tmp;
+	}
+/* */
+	gtw  = matrix_transpose( wg );
+	gtwg = matrix_mul( gtw, b );
+	gtwd = matrix_mul( gtw, a );
+/* */
+	ADD_EPS_TO_DIAG( gtwg );
+	igtwg = matrix_inverse( gtwg );
+	res   = matrix_mul( igtwg, gtwd );
+/* */
 	matrix_free( wg );
+	matrix_free( gtw );
 	matrix_free( gtwg );
-	matrix_free( wd );
 	matrix_free( gtwd );
 	matrix_free( igtwg );
 
@@ -278,10 +308,10 @@ MATRIX *matrix_div_weighted( const MATRIX *a, const MATRIX *b, const MATRIX *w )
 }
 
 /* Assignment functions */
-/*
- *
- */
-MATRIX *matrix_assign( MATRIX *dest, const double src, int row, int col ) {
+
+/***/
+MATRIX *matrix_assign( MATRIX *dest, const double src, int row, int col ) 
+{
 	row--;
 	col--;
 
@@ -293,7 +323,9 @@ MATRIX *matrix_assign( MATRIX *dest, const double src, int row, int col ) {
 	return NULL;
 }
 
-MATRIX *matrix_assign_seq( MATRIX *dest, const double *src, const int data_size ) {
+/***/
+MATRIX *matrix_assign_seq( MATRIX *dest, const double *src, const long data_size ) 
+{
 	if ( dest->total >= data_size ) {
 		memcpy(dest->element, src, data_size * sizeof(double));
 		return dest;
@@ -302,9 +334,9 @@ MATRIX *matrix_assign_seq( MATRIX *dest, const double *src, const int data_size 
 	return NULL;
 }
 
-MATRIX *matrix_assign_row( MATRIX *dest, const double *src, int row_index, const int data_size ) {
-	int j;
-
+/***/
+MATRIX *matrix_assign_row( MATRIX *dest, const double *src, int row_index, const int data_size ) 
+{
 	row_index--;
 
 	if ( dest->j == data_size ) {
@@ -313,7 +345,7 @@ MATRIX *matrix_assign_row( MATRIX *dest, const double *src, int row_index, const
 	}
 	else if ( dest->j > data_size ) {
 		memcpy(dest->element + row_index * dest->j, src, data_size * sizeof(double));
-		for ( j=data_size; j<dest->j; j++ )
+		for ( int j = data_size; j < dest->j; j++ )
 			dest->element[row_index * dest->j + j] = 0.0;
 		return dest;
 	}
@@ -321,18 +353,18 @@ MATRIX *matrix_assign_row( MATRIX *dest, const double *src, int row_index, const
 	return NULL;
 }
 
-MATRIX *matrix_assign_col( MATRIX *dest, const double *src, int col_index, const int data_size ) {
-	int i;
-
+/***/
+MATRIX *matrix_assign_col( MATRIX *dest, const double *src, int col_index, const int data_size ) 
+{
 	col_index--;
 
 	if ( dest->i == data_size ) {
-		for ( i=0; i<dest->i; i++ )
+		for ( int i = 0; i < dest->i; i++ )
 			dest->element[i * dest->j + col_index] = src[i];
 		return dest;
 	}
 	else if ( dest->i > data_size ) {
-		for ( i=0; i<dest->i; i++ ) {
+		for ( int i = 0; i < dest->i; i++ ) {
 			if ( i < data_size )
 				dest->element[i * dest->j + col_index] = src[i];
 			else
@@ -344,17 +376,17 @@ MATRIX *matrix_assign_col( MATRIX *dest, const double *src, int col_index, const
 	return NULL;
 }
 
-MATRIX *matrix_assign_diag( MATRIX *dest, const double *src, const int data_size ) {
-	int i;
-
-	if ( matrix_square( dest ) ) {
+/***/
+MATRIX *matrix_assign_diag( MATRIX *dest, const double *src, const int data_size ) 
+{
+	if ( IS_SQUARE( dest ) ) {
 		if ( dest->i == data_size ) {
-			for ( i=0; i<dest->i; i++ )
+			for ( int i = 0; i < dest->i; i++ )
 				dest->element[i * dest->j + i] = src[i];
 			return dest;
 		}
 		else if ( dest->i > data_size ) {
-			for ( i=0; i<dest->i; i++ ) {
+			for ( int i = 0; i < dest->i; i++ ) {
 				if ( i < data_size )
 					dest->element[i * dest->j + i] = src[i];
 				else
@@ -367,39 +399,42 @@ MATRIX *matrix_assign_diag( MATRIX *dest, const double *src, const int data_size
 	return NULL;
 }
 
-MATRIX *matrix_apply_all( MATRIX *dest, double (*func)( const double ) ) {
-	int i;
-
-	for ( i=0; i<dest->total; i++ )
+/***/
+MATRIX *matrix_apply_all( MATRIX *dest, double (*func)( const double ) ) 
+{
+	for ( long i = 0; i < dest->total; i++ )
 		dest->element[i] = func(dest->element[i]);
 
 	return dest;
 }
 
-MATRIX *matrix_apply_row( MATRIX *dest, double (*func)( const double ), int row_index ) {
-	int j;
-
+/***/
+MATRIX *matrix_apply_row( MATRIX *dest, double (*func)( const double ), int row_index ) 
+{
 	row_index--;
-	for ( j=0; j<dest->j; j++ ) dest->element[row_index * dest->j + j] = func(dest->element[row_index * dest->j + j]);
+	for ( int j = 0; j < dest->j; j++ ) 
+		dest->element[row_index * dest->j + j] = func(dest->element[row_index * dest->j + j]);
 
 	return dest;
 }
 
-MATRIX *matrix_apply_col( MATRIX *dest, double (*func)( const double ), int col_index ) {
-	int i;
-
+/***/
+MATRIX *matrix_apply_col( MATRIX *dest, double (*func)( const double ), int col_index ) 
+{
 	col_index--;
-	for ( i=0; i<dest->i; i++ ) dest->element[i * dest->j + col_index] = func(dest->element[i * dest->j + col_index]);
+	for ( int i = 0; i < dest->i; i++ ) 
+		dest->element[i * dest->j + col_index] = func(dest->element[i * dest->j + col_index]);
 
 	return dest;
 }
 
-MATRIX *matrix_apply_diag( MATRIX *dest, double (*func)( const double ) ) {
-	int i;
-	int step = dest->j + 1;
+/***/
+MATRIX *matrix_apply_diag( MATRIX *dest, double (*func)( const double ) ) 
+{
+	const int step = dest->j + 1;
 
-	if ( matrix_square( dest ) )
-		for ( i=0; i<dest->total; i+=step )
+	if ( IS_SQUARE( dest ) )
+		for ( long i = 0; i < dest->total; i += step )
 			dest->element[i] = func(dest->element[i]);
 	else
 		return NULL;
@@ -407,13 +442,15 @@ MATRIX *matrix_apply_diag( MATRIX *dest, double (*func)( const double ) ) {
 	return dest;
 }
 
-double *matrix_prefill_array( double *dest, int data_size, ... ) {
+/***/
+double *matrix_prefill_array( double *dest, int data_size, ... ) 
+{
 	va_list ap;
 	double  dval;
 	double *_dest = dest;
 
 	va_start(ap, data_size);
-	for ( ; data_size>0; data_size-- ) {
+	for ( ; data_size > 0; data_size-- ) {
 		dval     = va_arg(ap, double);
 		*_dest++ = dval;
 	}
@@ -422,8 +459,9 @@ double *matrix_prefill_array( double *dest, int data_size, ... ) {
 	return dest;
 }
 
-
-double *matrix_extract_seq( const MATRIX *src, double *dest, const int dest_size ) {
+/***/
+double *matrix_extract_seq( const MATRIX *src, double *dest, const long dest_size ) 
+{
 	if ( src->total <= dest_size ) {
 		memcpy(dest, src->element, dest_size * sizeof(double));
 		return dest;
@@ -432,31 +470,30 @@ double *matrix_extract_seq( const MATRIX *src, double *dest, const int dest_size
 	return NULL;
 }
 
-double matrix_determinant( const MATRIX *a ) {
-	if ( matrix_square( a ) ) {
+/***/
+double matrix_determinant( const MATRIX *a ) 
+{
+	if ( IS_SQUARE( a ) ) {
 		return 0;
 	}
 	return -1;
 }
 
-void matrix_free( MATRIX *a ) {
+/***/
+void matrix_free( MATRIX *a ) 
+{
 	free(a->element);
 	free(a);
 	return;
 }
 
-inline static int matrix_same_size( const MATRIX *a, const MATRIX *b ) {
-	return ( a->i == b->i && a->j == b->j );
-}
-
-inline static int matrix_square( const MATRIX *a ) {
-	return ( a->i == a->j );
-}
-
-static int matrix_copy( MATRIX *dest, const MATRIX *src ) {
-	if ( matrix_same_size( dest, src ) ) {
-		memcpy(dest->element, src->element, src->total * sizeof(double));
-		return 0;
-	}
-	return -1;
+/***/
+static MATRIX *duplicate_matrix( const MATRIX *src ) 
+{
+	MATRIX *result = matrix_new( src->i, src->j );
+	
+	if ( result )
+		memcpy(result->element, src->element, src->total * sizeof(double));
+		
+	return result;
 }
